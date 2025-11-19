@@ -1,0 +1,59 @@
+name: License and Copyright Scan (ScanCode)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  scancode_scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 1. Checkout the repository code
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Important for full history/deep scanning
+          
+      # 2. Set up Python (required to install and run ScanCode)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+          
+      # 3. Install ScanCode Toolkit
+      # The latest stable release is installed via pip
+      - name: Install ScanCode
+        run: pip install scancode-toolkit
+        
+      # 4. Run the ScanCode analysis
+      # -l (licenses), -c (copyrights), --json-pp (pretty-print JSON output)
+      # The scan results are saved to results.json
+      - name: Run ScanCode Scan
+        id: scan
+        run: |
+          echo "Running ScanCode on the repository..."
+          scancode -l -c --json-pp results.json .
+          echo "Scan complete. Results saved to results.json"
+        
+      # 5. Make the results available for download
+      - name: Upload Scan Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scancode-results
+          path: results.json
+          retention-days: 7
+          
+      # 6. Optional: Simple Compliance Check (Example)
+      # This step uses 'jq' to quickly check for any discovered AGPL licenses 
+      # and fails the build if one is found.
+      - name: Simple Compliance Check for AGPL
+        run: |
+          if grep -q "AGPL" results.json; then
+            echo "::error::ScanCode detected a potentially prohibited license (AGPL). Failing the build."
+            exit 1
+          else
+            echo "No AGPL license detected in the scan results."
+          fi
