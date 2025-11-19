@@ -1,107 +1,239 @@
-# For most projects, this workflow file will not need changing; you simply need
-# to commit it to your repository.
-#
-# You may wish to alter this file to override the set of languages analyzed,
-# or to provide custom queries or build logic.
-#
-# ******** NOTE ********
-# We have attempted to detect the languages in your repository. Please check
-# the `language` matrix defined below to confirm you have the correct set of
-# supported CodeQL languages.
-#
-name: "CodeQL Advanced"
+# For Some projects, this workflow file will need changing.
+# Try to only make changes for the languages you must.
+# See 'Build Java' as a example
+
+name: CodeQL for CW
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [develop, master, main, security/codeql]
   pull_request:
-    branches: [ "master" ]
+    branches: [develop, master, main, security/codeql]
   schedule:
-    - cron: '39 5 * * 5'
+    - cron: "18 15 * * 6"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  analyze:
-    name: Analyze (${{ matrix.language }})
-    # Runner size impacts CodeQL analysis time. To learn more, please see:
-    #   - https://gh.io/recommended-hardware-resources-for-running-codeql
-    #   - https://gh.io/supported-runners-and-hardware-resources
-    #   - https://gh.io/using-larger-runners (GitHub.com only)
-    # Consider using larger runners or machines with greater resources for possible analysis time improvements.
-    runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
+  create-matrix:
+    runs-on: ubuntu-22.04
+
     permissions:
-      # required for all workflows
-      security-events: write
-
-      # required to fetch internal or private CodeQL packs
-      packages: read
-
-      # only required for workflows in private repositories
-      actions: read
+      pull-requests: read
       contents: read
 
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Get languages and base directories for each project
+        id: set-matrix
+        # This script will find all the projects in the repo and create a matrix of projects
+        # The matrix will be used to run the CodeQL analysis on each project
+        # To disable a language, remove the env variable for that language
+        env:
+          LANG_ACTIONS: none
+          LANG_CPP: manual
+          LANG_CPP_EXCLUDE: '"vendor/golang.org" "vendor/github.com"'
+          LANG_CSHARP: none
+          LANG_GO: autobuild
+          LANG_JAVA: autobuild
+          LANG_JAVASCRIPT: none
+          LANG_PYTHON: none
+          LANG_RUBY: none
+
+          # You can MANUALLY OVERRIDE the matrix by providing a JSON file with the matrix.
+          # This will fully override the automatic matrix creation
+          # Matrix shape:
+          # [{ "dir": "$SOMEPATH", "lang": "$LANG", "build-mode": "$BUILD_MODE" }, ...]
+          MATRIX_OVERRIDE: ""
+        run: bash ${GITHUB_WORKSPACE}/.github/workflows/scripts/codeql/codeql-project-gather.sh
+
+  analyze:
+    name: Analyze
+    needs: create-matrix
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    if: ${{ needs.create-matrix.outputs.matrix != '[]' }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-        - language: actions
-          build-mode: none
-        - language: c-cpp
-          build-mode: autobuild
-        - language: javascript-typescript
-          build-mode: none
-        - language: python
-          build-mode: none
-        - language: rust
-          build-mode: none
-        # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
-        # Use `c-cpp` to analyze code written in C, C++ or both
-        # Use 'java-kotlin' to analyze code written in Java, Kotlin or both
-        # Use 'javascript-typescript' to analyze code written in JavaScript, TypeScript or both
-        # To learn more about changing the languages that are analyzed or customizing the build mode for your analysis,
-        # see https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/customizing-your-advanced-setup-for-code-scanning.
-        # If you are analyzing a compiled language, you can modify the 'build-mode' for that language to customize how
-        # your codebase is analyzed, see https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/codeql-code-scanning-for-compiled-languages
+        project: "${{fromJson(needs.create-matrix.outputs.matrix)}}"
+    env:
+      GOPRIVATE: github.com/coreweave
+      GH_ACCESS_TOKEN: ${{ secrets.ORG_REPO_READ_ONLY }}
+    permissions:
+      # required for all workflows
+      security-events: write
+      # required to fetch internal or private CodeQL packs
+      packages: read
+      # only required for workflows in private repositories
+      actions: read
+      contents: read
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-    # Add any setup steps before running the `github/codeql-action/init` action.
-    # This includes steps like installing compilers or runtimes (`actions/setup-node`
-    # or others). This is typically only required for manual builds.
-    # - name: Setup runtime (example)
-    #   uses: actions/setup-example@v1
+      - name: Setup Github Access Token
+        run: git config --global url.https://$GH_ACCESS_TOKEN@github.com/.insteadOf https://github.com/
 
-    # Initializes the CodeQL tools for scanning.
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v4
-      with:
-        languages: ${{ matrix.language }}
-        build-mode: ${{ matrix.build-mode }}
-        # If you wish to specify custom queries, you can do so here or in a config file.
-        # By default, queries listed here will override any specified in a config file.
-        # Prefix the list here with "+" to use these queries and those in the config file.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: "${{ matrix.project.lang }}"
+          build-mode: "${{ matrix.project.build-mode }}"
+          source-root: "${{ matrix.project.dir }}"
+          trap-caching: true
+          dependency-caching: true
 
-        # For more details on CodeQL's query packs, refer to: https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/configuring-code-scanning#using-queries-in-ql-packs
-        # queries: security-extended,security-and-quality
+      - name: Setup Golang
+        uses: actions/setup-go@v5
+        if: ${{ matrix.project.lang == 'go' }}
+        with:
+          go-version-file: "${{ matrix.project.dir }}/go.mod"
+          check-latest: true # WARNING: assumptions about build version
+          cache: true # important to fast retest
 
-    # If the analyze step fails for one of the languages you are analyzing with
-    # "We were unable to automatically build your code", modify the matrix above
-    # to set the build mode to "manual" for that language. Then modify this step
-    # to build your code.
-    # ℹ️ Command-line programs to run using the OS shell.
-    # 📚 See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsrun
-    - name: Run manual build steps
-      if: matrix.build-mode == 'manual'
-      shell: bash
-      run: |
-        echo 'If you are using a "manual" build mode for one or more of the' \
-          'languages you are analyzing, replace this with the commands to build' \
-          'your code, for example:'
-        echo '  make bootstrap'
-        echo '  make release'
-        exit 1
+      - name: List Dependancies Go Project
+        id: go_list_deps
+        if: ${{ matrix.project.lang == 'go' }}
+        working-directory: ${{ matrix.project.dir }}
+        run: |
+          echo "go-mod-list<<EOF" >> $GITHUB_OUTPUT
+          go mod edit -print >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v4
-      with:
-        category: "/language:${{matrix.language}}"
+      - name: Setup Buf
+        if: ${{ matrix.project.lang == 'go'  && contains(steps.go_list_deps.outputs.go-mod-list, 'bsr.core-services.ingress.coreweave.com')}}
+        uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true # setup buf cli and only login to the registry
+          version: ${{ needs.buf-version.outputs.bufVersion }}
+          domain: bsr.core-services.ingress.coreweave.com
+          token: ${{ secrets.ORG_BUF_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Dependancies Go Project
+        if: ${{ matrix.project.lang == 'go' }}
+        working-directory: ${{ matrix.project.dir }}
+        run: |
+          go mod download
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        if: ${{ matrix.project.lang == 'python' }}
+        with:
+          python-version: "3.12.x" # WARNING: assumptions about build version
+
+      - name: Upgrade pip
+        if: ${{ matrix.project.lang == 'python' }}
+        run: |
+          python -m pip install --upgrade pip
+          exit 0
+
+      # prefer poetry, then pipenv, then setup.py as a python module, then requirements.txt, then pyproject.toml
+      # make the assumption that any project that has MULTIPLE methods knows what it's doing.
+      # really, projects should have ONE package manager choice, but...
+      - name: Install Python Dependencies
+        continue-on-error: true
+        if: ${{ matrix.project.lang == 'python' }}
+        working-directory: ${{ matrix.project.dir }}
+        run: |
+          if [ -f poetry.lock ]; then
+            python -m pip install 'poetry<1.8'
+            poetry install --no-root
+          elif [ -f Pipfile ]; then
+            python -m pip install pipenv
+            pipenv install
+          elif [ -f setup.py ]; then
+            python -m pip install .
+          elif [ -f pyproject.toml ]; then
+            python -m pip install .
+          elif [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          fi
+          exit 0
+
+      - name: Setup JavaScript
+        uses: actions/setup-node@v4
+        if: ${{ matrix.project.lang == 'javascript' }}
+        with:
+          # WARNING: unsafe assumption; the page depend on a specific version of NodeJS
+          node-version: latest
+
+      - name: Install JavaScript Dependencies
+        continue-on-error: true
+        if: ${{ matrix.project.lang == 'javascript' }}
+        working-directory: ${{ matrix.project.dir }}
+        run: |
+          # WARNING: unsafe assumption; may want yarn instead of npm
+          npm install
+          exit 0
+
+      - name: Setup Java
+        # if we ever actually need this, it will need modification to install deps
+        uses: actions/setup-java@v4
+        if: ${{ matrix.project.lang == 'java-kotlin' }}
+        with:
+          distribution: temurin
+          java-version: "14"
+
+      - name: Build Java
+        continue-on-error: true
+        if: ${{ matrix.project.lang == 'java-kotlin' }}
+        working-directory: ${{ matrix.project.dir }}
+        run: |
+          if [ -f pom.xml ]; then
+            mvn -B -DskipTests=true -Dmaven.javadoc.skip=true clean install
+          fi
+          if [ -f build.gradle ]; then
+            ./gradlew build
+          fi
+          if [ -f settings.gradle ]; then
+            ./gradlew build
+          fi
+          exit 0
+
+      - name: Build C/C++
+        continue-on-error: true
+        if: matrix.project.lang == 'cpp'
+        working-directory: ${{ matrix.project.dir }}
+        run: |
+          echo "Put C/C++ build script here"
+          exit 0
+
+      - name: Build C#
+        continue-on-error: true
+        if: matrix.project.lang == 'csharp'
+        working-directory: ${{ matrix.project.dir }}
+        run: |
+          echo "Put C# build script here"
+          cd csharp
+          dotnet build
+          exit 0
+
+      - name: Build Ruby
+        continue-on-error: true
+        if: matrix.project.lang == 'ruby'
+        working-directory: ${{ matrix.project.dir }}
+        run: |
+          if [ -f Rakefile ]; then
+            rake build
+          elsif [ -f Gemfile ]; then
+            : # do nothing for now
+          fi
+          exit 0
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.project.lang }}"
