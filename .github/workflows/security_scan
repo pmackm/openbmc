@@ -1,0 +1,69 @@
+name: Application Security Scan (SAST & Secrets)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    # Scan every PR against the default branches
+    branches: [ "main", "master" ]
+  workflow_dispatch: # Allows manual trigger
+
+jobs:
+  semgrep_sast:
+    name: Code Analysis (Semgrep)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      # 1. Run Semgrep
+      # Uses the official Semgrep Action to scan for vulnerabilities.
+      # The SARIF output is automatically sent to the next step.
+      - name: Run Semgrep SAST
+        uses: returntocorp/semgrep-action@v2
+        with:
+          # Use the recommended security and bug rulesets
+          config: |
+            p/security-audit
+            p/bugs
+            p/all-contrib
+            
+      # 2. Upload SARIF results for GitHub Code Scanning
+      # This step makes the Semgrep findings appear in the 'Security' tab and PR checks.
+      - name: Upload Semgrep SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          
+  gitleaks_secrets:
+    name: Secrets Detection (Gitleaks)
+    runs-on: ubuntu-latest
+    
+    # Needs to run after Semgrep to avoid running on the same PR/Commit check
+    needs: [semgrep_sast]
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history for deep secrets scanning
+          fetch-depth: 0 
+
+      # 1. Run Gitleaks
+      # The official Gitleaks action scans the entire history.
+      - name: Run Gitleaks Secrets Scan
+        # This action automatically converts its findings to SARIF
+        uses: zricethezav/gitleaks-action@v4
+        with:
+          # Output to a SARIF file
+          report_format: sarif
+          # Gitleaks output path (must match the upload step)
+          output: gitleaks.sarif
+          
+      # 2. Upload SARIF results for GitHub Code Scanning
+      # This makes Gitleaks findings appear alongside Semgrep's findings.
+      - name: Upload Gitleaks SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks.sarif
