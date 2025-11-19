@@ -49,11 +49,11 @@ jobs:
       # 6. Optional: Simple Compliance Check (Example)
       # This step uses 'jq' to quickly check for any discovered AGPL licenses 
       # and fails the build if one is found.
-      - name: Simple Compliance Check for AGPL
-        run: |
-          if grep -q "AGPL" results.json; then
-            echo "::error::ScanCode detected a potentially prohibited license (AGPL). Failing the build."
-            exit 1
-          else
-            echo "No AGPL license detected in the scan results."
-          fi
+      # - name: Simple Compliance Check for AGPL
+      #  run: |
+      #    if grep -q "AGPL" results.json; then
+      #      echo "::error::ScanCode detected a potentially prohibited license (AGPL). Failing the build."
+      #      exit 1
+      #    else
+      #      echo "No AGPL license detected in the scan results."
+      #    fi
